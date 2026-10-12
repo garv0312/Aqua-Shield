@@ -1,0 +1,45 @@
+import{sb,S,loadCfg,upload,showPhotos,photoHtml,PIPE,stBadge}from"./core.js";
+import{$,$$,esc,inr,fmtD,fmtDT,pretty,say,errText,today,uuid}from"./util.js";
+import{openDoc,quoteDoc,invoiceDoc,warrantyDoc,itemsTable}from"./docs.js";
+export async function customerPage(el,q){
+  const{data:leads=[]}=await sb.from("leads").select("*").order("created_at",{ascending:false});
+  const code=q.get("lead")||(leads.length===1?leads[0].code:"");
+  if(code&&leads.some(l=>l.code===code))return detail(el,leads.find(l=>l.code===code),leads.length>1);
+  el.innerHTML=`<main><h1>My projects</h1><p class="muted">Welcome, ${esc(S.me.name||"")}.</p>${leads.length?leads.map(l=>`<a class="row2" href="#/my?lead=${l.code}" style="text-decoration:none"><span><b>${l.code}</b> ${esc(l.service)}<br><span class="muted">${fmtD(l.created_at)}</span></span>${stBadge(l.status)}</a>`).join(""):`<div class="note">No projects yet.</div>`}
+<div class="card"><h3>Add a request you made earlier</h3><p class="muted">Booked before creating your account? Enter the Lead ID and mobile number you used.</p><form id="cl" class="two"><div><label>Lead ID</label><input name="code" placeholder="WP-L-0001" required></div><div><label>Mobile</label><input name="mobile" maxlength="10" required></div><div><button class="btn sm">Add</button></div></form><div class="msg"></div></div>
+<a class="btn gold" href="#/book">Book Inspection</a></main>`;
+  $("#cl",el).onsubmit=async e=>{e.preventDefault();const f=e.target,{error}=await sb.rpc("claim_lead",{p_code:f.code.value,p_mobile:f.mobile.value});if(error)return say($(".msg",el),errText(error));customerPage(el,q)}}
+async function detail(el,L,many){
+  const c=await loadCfg(),id=L.id,one=(t,col="lead_id")=>sb.from(t).select("*").eq(col,id).maybeSingle();
+  const[tl,te,ins,qt,pay,inv,wo,pr,wa,cp,fb]=await Promise.all([sb.rpc("my_timeline",{p_lead:id}),sb.rpc("my_technician",{p_lead:id}),one("inspections"),one("quotes"),
+    sb.from("payments").select("*").eq("lead_id",id).order("at"),one("invoices"),one("work_orders"),sb.from("progress_updates").select("*").eq("lead_id",id).order("at",{ascending:false}),
+    one("warranties"),sb.from("complaints").select("*").eq("lead_id",id).order("created_at",{ascending:false}),one("feedback")]);
+  const Q=qt.data,W=wa.data,I=ins.data,V=inv.data,T=te.data?.[0],pays=pay.data||[],net=pays.reduce((s,p)=>s+(p.type==="refund"?-1:1)*Number(p.amount),0);
+  const when={};(tl.data||[]).forEach(r=>{if(!when[r.to_status])when[r.to_status]=r.at});
+  const steps=[...PIPE];if(when.follow_up||L.status==="follow_up")steps.splice(4,0,"follow_up");if(L.status==="lost")steps.push("lost");
+  const wAct=W&&W.end_date>=today(),paidIdx=["paid","warranty_active"].includes(L.status),canAct=Q&&Q.status==="sent"&&["quoted","follow_up"].includes(L.status)&&Q.valid_until>=today();
+  const advDue=Q?Math.round(Q.total*Q.adv_pct/100):0;
+  el.innerHTML=`<main>${many?`<a href="#/my">&larr; All projects</a>`:""}<h1>My project</h1><p><b>${L.code}</b> &middot; ${esc(L.service)} &middot; ${stBadge(L.status)}</p>
+<div class="card"><h3>Progress timeline</h3><ul class="vt">${steps.map(s=>`<li class="${s===L.status?"cur":when[s]?"done":""}"><span><b>${pretty(s)}</b>${when[s]?`<br><span class="muted">${fmtD(when[s])}</span>`:""}</span></li>`).join("")}</ul></div>
+${T?`<div class="card"><h3>Your technician</h3><p><b>${esc(T.name)}</b> &middot; <a href="tel:${esc(T.mobile)}">${esc(T.mobile||"")}</a> <span class="demo">DEMO</span>${T.inspection_at?`<br><span class="muted">Inspection slot: ${fmtDT(T.inspection_at)}</span>`:""}</p></div>`:""}
+${I?`<div class="card"><h3>Inspection report</h3><p>${esc(I.findings)}</p><p class="muted">Area ${esc(I.area_sqft)} sq ft &middot; Recommended: ${esc(I.recommended_service)} &middot; ${fmtDT(I.at)}</p>${photoHtml(I.photos)}</div>`:""}
+${Q?`<div class="card"><h3>Quotation ${Q.code}${Q.rev>1?` (Rev ${Q.rev})`:""}</h3>${itemsTable(Q.items)}<p>Total <b>${inr(Q.total)}</b> incl. ${Q.gst_pct}% GST &middot; Warranty ${Q.warranty_years} years<br>Valid until ${fmtD(Q.valid_until)}${Q.status==="sent"&&Q.valid_until<today()?" (expired, please contact us)":""}</p><p>${esc(Q.treatment_plan).replace(/\n/g,"<br>")}</p>
+${Q.status==="approved"?`<div class="note ok"><b>Quotation approved.</b> ${net<=0?`Advance due: <b>${inr(advDue)}</b> (${Q.adv_pct}%). Pay by cash, UPI or bank transfer; our team will contact you and issue a receipt.`:""}</div>`:""}${Q.status==="declined"?`<div class="note">You declined this quotation. Our team will follow up.</div>`:""}
+<div class="msg" id="qm"></div><button class="btn sm line" id="qv">View / print</button>${canAct?` <button class="btn sm" id="qa">Approve</button> <button class="btn sm line" id="qd">Decline</button>`:""}</div>`:""}
+${pays.length?`<div class="card"><h3>Payments and receipts</h3>${pays.map(p=>`<p>${esc(p.receipt_no)} &middot; ${pretty(p.type)} ${inr(p.amount)} &middot; ${esc(p.mode||"")} &middot; ${fmtD(p.paid_on)}</p>`).join("")}${Q?`<p><b>Balance:</b> ${inr(Q.total-net)}</p>`:""}</div>`:""}
+${V?`<div class="card"><h3>GST tax invoice</h3><p><b>${esc(V.no)}</b> &middot; ${inr(V.total)}</p><button class="btn sm" id="iv">View / print invoice</button></div>`:""}
+${wo.data||(pr.data||[]).length?`<div class="card"><h3>Work progress and photos</h3>${wo.data?`<p>Work started ${fmtD(wo.data.start_date)}${wo.data.qc?` &middot; Quality check passed ${fmtD(wo.data.qc.at)}`:""}</p>`:""}${(pr.data||[]).map(u=>`<p>${esc(u.note)}<br><span class="muted">${fmtDT(u.at)}</span></p>${photoHtml(u.photos)}`).join("")||`<p class="muted">No updates yet.</p>`}</div>`:""}
+${W?`<div class="card"><h3>Warranty</h3><p><b>${W.code}</b> &middot; ${W.years} years &middot; ${fmtD(W.start_date)} to <b>${fmtD(W.end_date)}</b> ${wAct?'<span class="st" style="background:#1a7f4b">Active</span>':'<span class="st" style="background:#b3261e">Expired</span>'}</p><button class="btn sm" id="wv">View / print certificate</button></div>
+<div class="card"><h3>Warranty complaints</h3>${wAct?`<form id="cf"><label>Describe the problem</label><textarea name="issue" rows="3" required></textarea><label>Photo (optional)</label><input type="file" name="ph" accept="image/*"><p><button class="btn sm">Raise complaint</button></p><div class="msg"></div></form><p class="muted">Free re-inspection while your warranty is active. We respond within 48 hours.</p>`:`<p class="muted">Your warranty has expired, so new complaints cannot be raised here. Please contact us.</p>`}
+${(cp.data||[]).map(x=>`<div class="card"><b>${x.code}</b> ${stBadge(x.status)}<br>${esc(x.issue)}${photoHtml(x.photos)}<ul class="vt">${(x.log||[]).map(g=>`<li class="done"><span><b>${pretty(g.to)}</b>${g.note?": "+esc(g.note):""}<br><span class="muted">${fmtDT(g.at)}</span></span></li>`).join("")}</ul></div>`).join("")}</div>`:(paidIdx?`<div class="card"><h3>Warranty</h3><p class="muted">Your warranty certificate is being issued and will appear here shortly.</p></div>`:"")}
+${paidIdx?(fb.data?`<div class="card"><h3>Your feedback</h3><p style="font-size:1.4rem;color:var(--head)">${"★".repeat(fb.data.rating)}${"☆".repeat(5-fb.data.rating)}</p><p>${esc(fb.data.text)}</p><p class="muted">${fb.data.status==="approved"?"Published on our website. Thank you!":"Thank you! Your review appears on our website after approval."}</p></div>`
+:`<div class="card"><h3>Rate our service</h3><div id="stars">${[1,2,3,4,5].map(n=>`<button type="button" class="star" data-s="${n}" aria-label="${n} star">★</button>`).join("")}</div><label>Comment</label><textarea id="ft" rows="2"></textarea><div class="msg" id="fm"></div><button class="btn sm" id="fs">Submit feedback</button></div>`):""}</main>`;
+  const go=()=>customerPage(el,new URLSearchParams("lead="+L.code));
+  $("#qv",el)&&($("#qv",el).onclick=()=>openDoc(quoteDoc(Q,L,c)));$("#iv",el)&&($("#iv",el).onclick=()=>openDoc(invoiceDoc(V,L,c)));$("#wv",el)&&($("#wv",el).onclick=()=>openDoc(warrantyDoc(W,L,c,I,V)));
+  const respond=ap=>async()=>{const{error}=await sb.rpc("customer_respond",{p_lead:id,p_approve:ap});if(error)return say($("#qm",el),errText(error));go()};
+  $("#qa",el)&&($("#qa",el).onclick=respond(true));$("#qd",el)&&($("#qd",el).onclick=respond(false));
+  if($("#cf",el))$("#cf",el).onsubmit=async e=>{e.preventDefault();const f=e.target,msg=$(".msg",f);say(msg,"Submitting...",true);
+    try{const ph=f.ph.files[0]?await upload("lead-photos",[f.ph.files[0]],"complaints/"+S.me.id):[];const{error}=await sb.rpc("raise_complaint",{p_lead:id,p_issue:f.issue.value,p_photos:ph});if(error)throw error;go()}catch(x){say(msg,errText(x))}};
+  let rate=0;$$("[data-s]",el).forEach(b=>b.onclick=()=>{rate=+b.dataset.s;$$("[data-s]",el).forEach(x=>x.classList.toggle("on",+x.dataset.s<=rate))});
+  $("#fs",el)&&($("#fs",el).onclick=async()=>{if(!rate)return say($("#fm",el),"Please choose a star rating.");const{error}=await sb.rpc("submit_feedback",{p_lead:id,p_rating:rate,p_text:$("#ft",el).value});if(error)return say($("#fm",el),errText(error));go()});
+  showPhotos(el)}

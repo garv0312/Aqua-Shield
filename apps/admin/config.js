@@ -3,4 +3,4 @@
 export const SUPABASE_URL = "https://gwbvhwslwebaqwubtguu.supabase.co";
 export const SUPABASE_ANON_KEY = "sb_publishable_HYY1RZZCAjmCmLOchMBC_A_9ILhE_hU";
 export const PHONE = "910000000000"; // DEMO number with country code
-export const WEB_URL = "https://YOUR-WEB-SITE.vercel.app"; // address of the customer/partner site, used for partner referral links
+export const WEB_URL = "https://aqua-shield-web.vercel.app/"; // address of the customer/partner site, used for partner referral links
